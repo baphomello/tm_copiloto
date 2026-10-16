@@ -4,9 +4,28 @@ bool S_Record = true;
 [Setting name="Show status window"]
 bool S_ShowWindow = true;
 
+[Setting name="Sample rate (Hz)" min=1 max=100 description="Target frames recorded per second of race time. The real rate cannot exceed your frame rate."]
+int S_SampleRateHz = 25;
+
 void Main()
 {
 	print("Loaded version " + Meta::ExecutingPlugin().Version);
+}
+
+void Update(float dt)
+{
+	UpdateRecorder();
+}
+
+// Close the current file cleanly when the plugin is disabled, reloaded or unloaded.
+void OnDisabled()
+{
+	EndRun("stopped");
+}
+
+void OnDestroyed()
+{
+	EndRun("stopped");
 }
 
 void RenderMenu()
@@ -23,6 +42,8 @@ void Render()
 	if (!S_ShowWindow) return;
 	if (UI::Begin("tm_copiloto", S_ShowWindow, UI::WindowFlags::AlwaysAutoResize | UI::WindowFlags::NoCollapse)) {
 		UI::Text(S_Record ? "Recording: enabled" : "Recording: disabled");
+		UI::Text(g_run is null ? "Waiting for a run" : "Recording run: " + g_run.frames + " frames");
+		if (g_lastFile != "") UI::Text("Last file: " + g_lastFile);
 		if (UI::CollapsingHeader("Live values")) RenderLiveValues();
 	}
 	UI::End();
