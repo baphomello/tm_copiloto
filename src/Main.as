@@ -71,15 +71,6 @@ void RenderLiveValues()
 		UI::Text("MLFeed CPs: " + feed.CpCount + " / " + race.CPsToFinish + ", last " + feed.LastCpTime + " ms, respawns " + feed.NbRespawnsRequested);
 	}
 
-	auto native = cast<CSmScriptPlayer>(player.ScriptAPI);
-	if (native !is null) {
-		uint n = native.RaceWaypointTimes.Length;
-		uint last = 0;
-		if (n > 0) last = native.RaceWaypointTimes[n - 1];
-		UI::Text("Native race time: " + native.CurrentRaceTime + " ms (start " + native.StartTime + ")");
-		UI::Text("Native waypoints: " + n + ", last " + last + " ms, respawns " + native.CurrentRaceRespawns);
-	}
-
 	auto s = GetCarState(player);
 	if (s is null) {
 		UI::Text("Car state: unavailable");
