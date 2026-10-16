@@ -14,7 +14,7 @@ class Run
 }
 
 Run@ g_run;
-int g_handledStart = -1; // start time of the last recorded run, so a finished run is not recorded twice
+int g_countdownStart = -1; // start time seen while its countdown was running
 string g_lastFile;
 
 void UpdateRecorder()
@@ -39,16 +39,22 @@ void UpdateRecorder()
 
 	int raceTime = api.GameTime - script.StartTime;
 	if (g_run is null) {
-		// Negative race time is the countdown before the car can move.
-		if (raceTime < 0 || script.StartTime == g_handledStart) return;
+		// Only runs whose countdown (negative race time) was seen are recorded. This skips stale start times:
+		// entering editor test mode, a finished run still rolling, or a plugin reload in the middle of a run.
+		if (raceTime < 0) {
+			g_countdownStart = script.StartTime;
+			return;
+		}
+		if (script.StartTime != g_countdownStart) return;
+		g_countdownStart = -1;
 		StartRun(player, script.StartTime);
 	}
 	if (raceTime >= g_run.nextSample) WriteFrame(player, raceTime);
-	WriteRaceEvents();
+	WriteRaceEvents(player);
 }
 
 // Checkpoints, respawns and the finish come from MLFeed, which reads them from the game's own race events.
-void WriteRaceEvents()
+void WriteRaceEvents(CSmPlayer@ player)
 {
 	auto race = MLFeed::GetRaceData_V4();
 	auto feed = race.LocalPlayer;
@@ -63,15 +69,31 @@ void WriteRaceEvents()
 	}
 
 	auto times = feed.CpTimes; // index 0 is the start and always 0
+	bool newCheckpoint = false;
 	while (g_run.checkpoints < feed.CpCount) {
 		g_run.checkpoints++;
 		int t = times[g_run.checkpoints];
 		g_run.file.WriteLine('{"type":"checkpoint","race_time":' + t + ',"index":' + g_run.checkpoints + '}');
 		g_run.splits += (g_run.splits == "" ? "" : ",") + t;
 		g_run.file.Flush();
+		newCheckpoint = true;
 	}
 
-	if (race.CPsToFinish > 0 && g_run.checkpoints >= int(race.CPsToFinish)) EndRun("finish", times[g_run.checkpoints]);
+	// CPsToFinish is 0 in editor test mode (unsaved maps have no lap count), so also check the crossed waypoint itself.
+	bool finished = race.CPsToFinish > 0 && g_run.checkpoints >= int(race.CPsToFinish);
+	if (finished || (newCheckpoint && CrossedFinishLine(player))) EndRun("finish", times[g_run.checkpoints]);
+}
+
+// The game updates the player's respawn landmark as soon as a waypoint is crossed, before MLFeed reports it.
+// Multilap maps use a multilap line instead of a finish line and rely on MLFeed's lap count above.
+bool CrossedFinishLine(CSmPlayer@ player)
+{
+	auto playground = cast<CSmArenaClient>(GetApp().CurrentPlayground);
+	if (playground is null || playground.Arena is null) return false;
+	uint i = player.CurrentLaunchedRespawnLandmarkIndex;
+	if (i >= playground.Arena.MapLandmarks.Length) return false;
+	auto waypoint = playground.Arena.MapLandmarks[i].Waypoint;
+	return waypoint !is null && waypoint.IsFinish;
 }
 
 void StartRun(CSmPlayer@ player, int startTime)
@@ -138,7 +160,6 @@ void EndRun(const string &in reason, int raceTime = -1)
 	g_run.file.WriteLine('{"type":"end","reason":"' + reason + '","race_time":' + raceTime + ',"checkpoints":[' + g_run.splits + ']}');
 	g_run.file.Close();
 	print("Saved " + g_run.frames + " frames (" + reason + ") to " + g_run.path);
-	g_handledStart = g_run.startTime;
 	g_lastFile = g_run.path;
 	@g_run = null;
 }
