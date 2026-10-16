@@ -1,0 +1,8 @@
+[meta]
+name     = "tm_copiloto"
+author   = "Baphomello"
+category = "Utilities"
+version  = "0.1.0"
+
+[script]
+dependencies = ["VehicleState", "MLFeedRaceData"]
