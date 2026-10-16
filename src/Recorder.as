@@ -9,34 +9,33 @@ class Run
 	int lastRaceTime = 0;
 	uint frames = 0;
 	int checkpoints = 0;  // waypoints already written, finish and lap lines included
-	int respawns = -1;    // MLFeed respawn counter seen at run start; -1 until MLFeed reports this run
+	int respawns = 0;     // respawn lines already written
 	string splits;        // comma-separated checkpoint times for the end line
 }
 
 Run@ g_run;
 int g_handledStart = -1; // start time of the last recorded run, so a finished run is not recorded twice
 string g_lastFile;
-uint g_nativeWaypoints = 0;
 
 void UpdateRecorder()
 {
-	auto player = GetLocalPlayer();
+	if (!S_Record) {
+		EndRun("stopped");
+		return;
+	}
 	auto api = GetApp().Network.PlaygroundClientScriptAPI;
-	CSmScriptPlayer@ script = player is null ? null : cast<CSmScriptPlayer>(player.ScriptAPI);
-	if (!S_Record || script is null || api is null) {
-		EndRun(S_Record ? "left" : "stopped");
+	if (api is null || !IsRacing()) {
+		EndRun("left");
 		return;
 	}
 
+	// The player is briefly unavailable while the game respawns the car; keep the run open meanwhile.
+	auto player = GetLocalPlayer();
+	CSmScriptPlayer@ script = player is null ? null : cast<CSmScriptPlayer>(player.ScriptAPI);
+	if (script is null) return;
+
 	// Respawning at the start or pressing restart gives the player a new start time.
 	if (g_run !is null && g_run.startTime != script.StartTime) EndRun("restart");
-
-	// ponytail: temporary diagnostic to compare the native waypoint API with MLFeed (editor included); remove once decided.
-	uint n = script.RaceWaypointTimes.Length;
-	if (n != g_nativeWaypoints) {
-		g_nativeWaypoints = n;
-		if (n > 0) trace("Native waypoint " + n + " at " + script.RaceWaypointTimes[n - 1] + " ms");
-	}
 
 	int raceTime = api.GameTime - script.StartTime;
 	if (g_run is null) {
@@ -56,10 +55,11 @@ void WriteRaceEvents()
 	// Right after a restart MLFeed may still describe the previous run for a frame or two.
 	if (feed is null || int(feed.StartTime) != g_run.startTime) return;
 
-	if (g_run.respawns < 0) g_run.respawns = int(feed.NbRespawnsRequested);
-	while (g_run.respawns < int(feed.NbRespawnsRequested)) {
+	// RespawnTimes holds the moment of each respawn. LastRespawnRaceTime is not used: MLFeed adds a 1 s estimated penalty to it.
+	auto respawnTimes = feed.RespawnTimes;
+	while (g_run.respawns < int(respawnTimes.Length)) {
+		g_run.file.WriteLine('{"type":"respawn","race_time":' + respawnTimes[g_run.respawns] + '}');
 		g_run.respawns++;
-		g_run.file.WriteLine('{"type":"respawn","race_time":' + feed.LastRespawnRaceTime + '}');
 	}
 
 	auto times = feed.CpTimes; // index 0 is the start and always 0
@@ -151,6 +151,15 @@ string Num(float v)
 string Vec(const vec3 &in v)
 {
 	return "[" + Num(v.x) + "," + Num(v.y) + "," + Num(v.z) + "]";
+}
+
+// True while a race is on screen: driving, or rolling past the finish line. False during intros, podiums and menus.
+bool IsRacing()
+{
+	auto playground = cast<CSmArenaClient>(GetApp().CurrentPlayground);
+	if (playground is null || playground.GameTerminals.Length == 0) return false;
+	auto sequence = playground.GameTerminals[0].UISequence_Current;
+	return sequence == SGamePlaygroundUIConfig::EUISequence::Playing || sequence == SGamePlaygroundUIConfig::EUISequence::Finish;
 }
 
 // The local player, but only while their own car is on screen.
