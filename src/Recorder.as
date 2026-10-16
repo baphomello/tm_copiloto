@@ -8,11 +8,15 @@ class Run
 	int nextSample = 0;
 	int lastRaceTime = 0;
 	uint frames = 0;
+	int checkpoints = 0;  // waypoints already written, finish and lap lines included
+	int respawns = -1;    // MLFeed respawn counter seen at run start; -1 until MLFeed reports this run
+	string splits;        // comma-separated checkpoint times for the end line
 }
 
 Run@ g_run;
 int g_handledStart = -1; // start time of the last recorded run, so a finished run is not recorded twice
 string g_lastFile;
+uint g_nativeWaypoints = 0;
 
 void UpdateRecorder()
 {
@@ -27,6 +31,13 @@ void UpdateRecorder()
 	// Respawning at the start or pressing restart gives the player a new start time.
 	if (g_run !is null && g_run.startTime != script.StartTime) EndRun("restart");
 
+	// ponytail: temporary diagnostic to compare the native waypoint API with MLFeed (editor included); remove once decided.
+	uint n = script.RaceWaypointTimes.Length;
+	if (n != g_nativeWaypoints) {
+		g_nativeWaypoints = n;
+		if (n > 0) trace("Native waypoint " + n + " at " + script.RaceWaypointTimes[n - 1] + " ms");
+	}
+
 	int raceTime = api.GameTime - script.StartTime;
 	if (g_run is null) {
 		// Negative race time is the countdown before the car can move.
@@ -34,6 +45,33 @@ void UpdateRecorder()
 		StartRun(player, script.StartTime);
 	}
 	if (raceTime >= g_run.nextSample) WriteFrame(player, raceTime);
+	WriteRaceEvents();
+}
+
+// Checkpoints, respawns and the finish come from MLFeed, which reads them from the game's own race events.
+void WriteRaceEvents()
+{
+	auto race = MLFeed::GetRaceData_V4();
+	auto feed = race.LocalPlayer;
+	// Right after a restart MLFeed may still describe the previous run for a frame or two.
+	if (feed is null || int(feed.StartTime) != g_run.startTime) return;
+
+	if (g_run.respawns < 0) g_run.respawns = int(feed.NbRespawnsRequested);
+	while (g_run.respawns < int(feed.NbRespawnsRequested)) {
+		g_run.respawns++;
+		g_run.file.WriteLine('{"type":"respawn","race_time":' + feed.LastRespawnRaceTime + '}');
+	}
+
+	auto times = feed.CpTimes; // index 0 is the start and always 0
+	while (g_run.checkpoints < feed.CpCount) {
+		g_run.checkpoints++;
+		int t = times[g_run.checkpoints];
+		g_run.file.WriteLine('{"type":"checkpoint","race_time":' + t + ',"index":' + g_run.checkpoints + '}');
+		g_run.splits += (g_run.splits == "" ? "" : ",") + t;
+		g_run.file.Flush();
+	}
+
+	if (race.CPsToFinish > 0 && g_run.checkpoints >= int(race.CPsToFinish)) EndRun("finish", times[g_run.checkpoints]);
 }
 
 void StartRun(CSmPlayer@ player, int startTime)
@@ -93,10 +131,11 @@ void WriteFrame(CSmPlayer@ player, int raceTime)
 	g_run.nextSample = (raceTime / period + 1) * period;
 }
 
-void EndRun(const string &in reason)
+void EndRun(const string &in reason, int raceTime = -1)
 {
 	if (g_run is null) return;
-	g_run.file.WriteLine('{"type":"end","reason":"' + reason + '","race_time":' + g_run.lastRaceTime + '}');
+	if (raceTime < 0) raceTime = g_run.lastRaceTime;
+	g_run.file.WriteLine('{"type":"end","reason":"' + reason + '","race_time":' + raceTime + ',"checkpoints":[' + g_run.splits + ']}');
 	g_run.file.Close();
 	print("Saved " + g_run.frames + " frames (" + reason + ") to " + g_run.path);
 	g_handledStart = g_run.startTime;
