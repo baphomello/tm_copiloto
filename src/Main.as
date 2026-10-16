@@ -32,7 +32,7 @@ void Render()
 void RenderLiveValues()
 {
 	auto map = GetApp().RootMap;
-	if (map !is null) UI::Text("Map: " + Text::StripFormatCodes(string(map.MapName)) + " (" + map.MapUid + ")");
+	if (map !is null) UI::Text("Map: " + Text::StripFormatCodes(string(map.MapName)) + " (" + map.EdChallengeId + ")");
 	UI::Text("In editor: " + (GetApp().Editor !is null));
 
 	auto player = GetLocalPlayer();
